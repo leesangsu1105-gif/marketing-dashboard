@@ -16,7 +16,6 @@ urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHa
 # 1. 전역 시스템 환경 및 테마 최적화
 st.set_page_config(page_title="마케팅 효율 인텔리전스 시스템", layout="wide")
 
-# STREAMING_CHUNK: Injecting premium custom CSS styles with Korean Financial YoY colors...
 st.markdown("""<style>
 .block-container { padding-top: 2rem; padding-bottom: 2rem; }
 h1 { font-weight: 800; color: #FFFFFF; letter-spacing: -0.05em; }
@@ -101,7 +100,7 @@ st.markdown("---")
 
 tabs = st.tabs(["전체 통합", "뿌리오", "반값문자", "알뜰문자", "문자매니아"])
 
-# 3. 데이터 인프라 스키마 정의
+# 3. 데이터 인프라 스키마 정의 (신규 추가된 매체별 CPA 반영)
 schema_mapping = {
     '연도': 'str', '월': 'str', '서비스명': 'str',
     '전체매출': 'float', '전체광고비': 'float',
@@ -109,13 +108,13 @@ schema_mapping = {
     '네이버가입자': 'float', '구글가입자': 'float', '전체가입자': 'float',
     '광고가입자CPA': 'float', '신규유료고객수': 'float', '유료고객CPA': 'float',
     '유료고객전환율': 'float', '신규당월매출': 'float', '광고비ROAS': 'float',
-    '매출': 'float', '신규누적매출': 'float'
+    '매출': 'float', '신규누적매출': 'float',
+    '네이버CPA': 'float', '구글CPA': 'float'
 }
 numeric_cols = [col for col, dtype in schema_mapping.items() if dtype == 'float']
 
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSWL4QJl1FZtEc2Jh7ymw9fcC17z-Huu5o0bQMVvEge3l9IZL4T90dWiEGDxwL0QeAPayEBElVmCBjt/pub?gid=2077779532&single=true&output=csv"
 
-# STREAMING_CHUNK: Loading data from Google Sheets bypass cache...
 @st.cache_data(ttl=5)
 def load_google_sheet_data(url):
     # 구글 서버 자체의 웹게시 캐시(5분 지연)를 원천 차단하기 위해 주소 끝에 타임스탬프 난수를 강제 병합합니다.
@@ -139,7 +138,6 @@ try:
             raw_data[col] = pd.to_numeric(raw_data[col], errors='coerce').fillna(0.0)
 
     # [지능형 ROAS 필터 변환 함수]
-    # 구글 스프레드시트가 원본 소수점 비율(1.50)로 주든, 기호가 포함된 글자(150.10%)로 주든 정밀 변환합니다.
     def smart_parse_roas(val):
         if pd.isna(val) or val == '':
             return 0.0
@@ -147,7 +145,6 @@ try:
             val = val.replace('%', '').replace(',', '').strip()
         try:
             num = float(val)
-            # 만약 10.0 이하의 극소수점 비율 형태로 넘어왔다면 (1.50 -> 150% 의미) 100을 곱해 정규화합니다.
             if 0 < num <= 10.0:
                 return num * 100
             return num
@@ -160,6 +157,10 @@ try:
     raw_data['월'] = raw_data['월'].astype(str).str.strip()
     raw_data['서비스명'] = raw_data['서비스명'].astype(str).str.strip()
     
+    # 만약 구글 시트에서 직접 전달된 CPA 값이 없다면 수식으로 안전 복구해둡니다.
+    raw_data['네이버CPA'] = (raw_data['네이버광고비'] / raw_data['네이버가입자']).fillna(0).replace([float('inf'), float('-inf')], 0)
+    raw_data['구글CPA'] = (raw_data['구글광고비'] / raw_data['구글가입자']).fillna(0).replace([float('inf'), float('-inf')], 0)
+    
     raw_data['월_num'] = raw_data['월'].str.extract(r'(\d+)').astype(float).fillna(0)
     raw_data = raw_data.sort_values(by=['연도', '월_num']).drop(columns=['월_num'])
     
@@ -170,16 +171,12 @@ try:
         st.rerun()
     st.sidebar.success("✅ 구글 실시간 데이터 파이프라인 가동 중")
 
-    # STREAMING_CHUNK: Defining metrics calculation and filtering active months...
     def calculate_metrics(df, target_year, month_filter=None):
         df_year = df[df['연도'] == str(target_year)]
         if df_year.empty:
             return None
         
         # [지능형 활성 월 자동 필터링 파이프라인]
-        # 1. 명시적인 month_filter가 주어지면(YoY 비교 모드) 해당 필터를 사용하여 개별 월을 필터링합니다.
-        # 2. 단해년도 성과 보기의 경우, 미래의 '빈 행(0원)' 데이터가 평균 계산 및 최종 누적액 계산을 훼손하지 않도록
-        #    광고비, 매출, 가입자 중 실적이 실제로 기록된 활성 월(Active Months)만 자동 필터링합니다.
         if month_filter is not None and len(month_filter) > 0:
             df_year = df_year[df_year['월'].isin(month_filter)]
         else:
@@ -208,7 +205,6 @@ try:
         roas = df_year['광고비ROAS'].mean() if not df_year.empty else 0.0
         
         # [★지능형 누적 매출 정합성 계산 엔진★]
-        # 활성 월 중 가장 마지막 월(최신 월)의 행 데이터를 추적하여 최종 누적 값 하나만 가져옵니다.
         df_year_calc = df_year.copy()
         df_year_calc['월_num_temp'] = df_year_calc['월'].str.extract(r'(\d+)').astype(float).fillna(0)
         df_year_sorted = df_year_calc.sort_values(by='월_num_temp')
@@ -225,7 +221,6 @@ try:
             'roas': roas
         }
 
-    # STREAMING_CHUNK: Setting up YoY HTML templates with strict sign color rules...
     def get_delta_html(current_val, prev_val, is_lower_better=False, is_pct_p=False):
         if prev_val is None or prev_val == 0:
             return '<div class="kpi-delta-white">YoY: -</div>'
@@ -252,10 +247,8 @@ try:
         pct = (diff / prev_val) * 100
         sign = '+' if diff >= 0 else ''
         arrow = '↑' if diff >= 0 else '↓'
-        # 그라데이션 카드용(화이트 초고대비 텍스트 유지)
         return f'<div class="kpi-delta-white">YoY: {arrow} {sign}{pct:.1f}%</div>'
 
-    # STREAMING_CHUNK: Generating grid board and responsive plots...
     def generate_bi_charts(data_subset, label_title, show_yoy=False):
         st.markdown(f"### 🗓️ {label_title}")
         
@@ -264,9 +257,7 @@ try:
         half_class = "kpi-card-half" if show_yoy else "kpi-card-half no-yoy"
         
         if show_yoy:
-            # 2026년에 실제로 데이터가 입력 완료된 활성 월들만 동적으로 추출
             df_26 = data_subset[data_subset['연도'] == '2026']
-            # 실제로 수치(광고비, 가입자, 매출)가 입력된 월만 추출
             active_months_26 = df_26[
                 (df_26['전체광고비'] > 0) | 
                 (df_26['전체가입자'] > 0) | 
@@ -309,7 +300,6 @@ try:
             
             title_prefix = "2026"
         else:
-            # 단해년도 분석 모드 (YoY 생략 및 밸런싱)
             year_val = "2025" if "2025년" in year_mode else "2026"
             m = calculate_metrics(data_subset, int(year_val))
             if not m:
@@ -324,7 +314,6 @@ try:
             current_cpa_paid = m['cpa_paid']
             current_roas = m['roas']
             
-            # 단해년도 보기 시 YoY 제거를 위해 빈 문자열 대입
             delta_spend = ''
             delta_revenue = ''
             delta_signups = ''
@@ -335,7 +324,6 @@ try:
             
             title_prefix = year_val
 
-        # HTML 문자열을 왼쪽 끝으로 바짝 붙여서 마크다운 파서가 코드블록으로 오해하지 못하게 원천봉쇄합니다!
         html_code = f"""<div class="kpi-board">
 <div class="{tall_class} purple">
 <div>
@@ -500,7 +488,7 @@ try:
                                        hoverlabel=dict(bgcolor='#1E293B', font_size=12, font_color='#FFFFFF'))
                 st.plotly_chart(fig_roas, use_container_width=True)
             else:
-                # 단해년도 차트 렌더링 (매출액 및 CPA)
+                # 단해년도 차트 렌더링 (매출액 및 매체별 상세 CPA 통합)
                 st.markdown("<p style='font-weight:600; margin-top:1rem; color:#E2E8F0;'>🔹 월별 매출 규모 및 성과 추이 (단위: 억원)</p>", unsafe_allow_html=True)
                 fig_financial = go.Figure()
                 fig_financial.add_trace(go.Scatter(x=df_single['월'], y=df_single['신규당월매출'] / 100000000, name='신규당월매출', 
@@ -515,10 +503,16 @@ try:
                                             hoverlabel=dict(bgcolor='#1E293B', font_size=12, font_color='#FFFFFF'))
                 st.plotly_chart(fig_financial, use_container_width=True)
                 
+                # [업그레이드] 월별 CPA 추이에 광고가입자CPA / 유료고객CPA 이외에 네이버CPA와 구글CPA 점선을 함께 오버랩시킵니다!
                 st.markdown("<p style='font-weight:600; margin-top:1.5rem; color:#E2E8F0;'>🔹 월별 가입자 CPA(획득 비용) 추이 (단위: 원)</p>", unsafe_allow_html=True)
                 fig_efficiency = go.Figure()
-                fig_efficiency.add_trace(go.Scatter(x=df_single['월'], y=df_single['광고가입자CPA'], name='광고가입자CPA', line=dict(color='#F59E0B', width=2.5, shape='spline')))
-                fig_efficiency.add_trace(go.Scatter(x=df_single['월'], y=df_single['유료고객CPA'], name='유료고객CPA', line=dict(color='#EF4444', width=2.5, shape='spline')))
+                # 1) 전체 성과 (실선)
+                fig_efficiency.add_trace(go.Scatter(x=df_single['월'], y=df_single['광고가입자CPA'], name='전체 광고가입자CPA', line=dict(color='#F59E0B', width=2.5, shape='spline')))
+                fig_efficiency.add_trace(go.Scatter(x=df_single['월'], y=df_single['유료고객CPA'], name='전체 유료고객CPA', line=dict(color='#EF4444', width=2.5, shape='spline')))
+                # 2) 매체별 상세 성과 (점선 - 가독성을 저해하지 않으면서 피드백 제공)
+                fig_efficiency.add_trace(go.Scatter(x=df_single['월'], y=df_single['네이버CPA'], name='네이버 CPA', line=dict(color='#03C75A', width=2, dash='dot', shape='spline')))
+                fig_efficiency.add_trace(go.Scatter(x=df_single['월'], y=df_single['구글CPA'], name='구글 CPA', line=dict(color='#4285F4', width=2, dash='dot', shape='spline')))
+                
                 fig_efficiency.update_layout(height=220, margin=dict(t=10, b=10, l=10, r=10),
                                              paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
                                              legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color='#E2E8F0')),
@@ -536,7 +530,8 @@ try:
     
     with tabs[0]:
         agg_cols = ['전체매출', '전체광고비', '네이버광고비', '구글광고비', '광고가입자', 
-                    '네이버가입자', '구글가입자', '전체가입자', '신규유료고객수', '신규당월매출', '매출', '신규누적매출']
+                    '네이버가입자', '구글가입자', '전체가입자', '신규유료고객수', '신규당월매출', '매출', '신규누적매출',
+                    '네이버CPA', '구글CPA']
         
         df_all_2025 = raw_data[raw_data['연도'] == '2025'].groupby('월')[agg_cols].sum().reset_index()
         df_all_2026 = raw_data[raw_data['연도'] == '2026'].groupby('월')[agg_cols].sum().reset_index()
@@ -550,6 +545,10 @@ try:
                 df_target['광고가입자CPA'] = (df_target['전체광고비'] / df_target['광고가입자']).fillna(0)
                 df_target['유료고객CPA'] = (df_target['전체광고비'] / df_target['신규유료고객수']).fillna(0)
                 df_target['유료고객전환율'] = (df_target['신규유료고객수'] / df_target['광고가입자'] * 100).fillna(0)
+                
+                # [가중 연산 패치] 전체 통합 탭의 매체별 CPA는 각 매체별 총 합산 광고비와 가입자 수를 기준으로 정밀히 새로 구합니다.
+                df_target['네이버CPA'] = (df_target['네이버광고비'] / df_target['네이버가입자']).fillna(0).replace([float('inf'), float('-inf')], 0)
+                df_target['구글CPA'] = (df_target['구글광고비'] / df_target['구글가입자']).fillna(0).replace([float('inf'), float('-inf')], 0)
                 
                 # 병합 매칭 후 ROAS 주입
                 df_target['광고비ROAS'] = df_roas['광고비ROAS']
@@ -567,7 +566,6 @@ try:
         else:
             generate_bi_charts(df_all_merged, f"전체 서비스 통합 보고 [{year_mode}]", show_yoy=False)
 
-    # STREAMING_CHUNK: Setting up service-specific loops and views...
     def render_service_view(tab_obj, s_name):
         with tab_obj:
             df_s_2025 = raw_data[(raw_data['서비스명'] == s_name) & (raw_data['연도'] == '2025')].copy()
@@ -575,6 +573,10 @@ try:
             
             for df_target in [df_s_2025, df_s_2026]:
                 if not df_target.empty:
+                    # 개별 브랜드 뷰에서도 수치 정밀화
+                    df_target['네이버CPA'] = (df_target['네이버광고비'] / df_target['네이버가입자']).fillna(0).replace([float('inf'), float('-inf')], 0)
+                    df_target['구글CPA'] = (df_target['구글광고비'] / df_target['구글가입자']).fillna(0).replace([float('inf'), float('-inf')], 0)
+                    
                     df_target['월_idx'] = df_target['월'].str.extract(r'(\d+)').astype(float).fillna(0)
                     df_target.sort_values('월_idx', inplace=True)
                     
