@@ -16,6 +16,7 @@ urllib.request.install_opener(urllib.request.build_opener(urllib.request.HTTPSHa
 # 1. 전역 시스템 환경 및 테마 최적화
 st.set_page_config(page_title="마케팅 효율 인텔리전스 시스템", layout="wide")
 
+# STREAMING_CHUNK: Injecting premium custom CSS styles with Korean Financial YoY colors...
 st.markdown("""<style>
 .block-container { padding-top: 2rem; padding-bottom: 2rem; }
 h1 { font-weight: 800; color: #FFFFFF; letter-spacing: -0.05em; }
@@ -76,8 +77,9 @@ h3 { font-weight: 700; color: #E2E8F0; margin-top: 1.5rem; }
     display: inline-flex; 
     align-items: center; 
 }
-.kpi-delta.good { color: #34D399; } /* 에메랄드 그린 */
-.kpi-delta.bad { color: #F87171; }  /* 로즈 레드 */
+/* 한국 증시 표준 스키마 적용: + 상승은 빨간색(Warm Red), - 하락은 파란색(Cool Blue) */
+.kpi-delta.plus { color: #F87171; }   /* 정열적인 상승 빨간색 */
+.kpi-delta.minus { color: #60A5FA; }  /* 이성적인 하락 파란색 */
 .kpi-delta-white { font-size: 0.95rem; font-weight: 700; color: #FFFFFF; opacity: 0.9; }
 
 /* 그라데이션 프리미엄 카드 배경 선언 */
@@ -113,6 +115,7 @@ numeric_cols = [col for col, dtype in schema_mapping.items() if dtype == 'float'
 
 SHEET_CSV_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSWL4QJl1FZtEc2Jh7ymw9fcC17z-Huu5o0bQMVvEge3l9IZL4T90dWiEGDxwL0QeAPayEBElVmCBjt/pub?gid=2077779532&single=true&output=csv"
 
+# STREAMING_CHUNK: Loading data from Google Sheets bypass cache...
 @st.cache_data(ttl=5)
 def load_google_sheet_data(url):
     # 구글 서버 자체의 웹게시 캐시(5분 지연)를 원천 차단하기 위해 주소 끝에 타임스탬프 난수를 강제 병합합니다.
@@ -167,16 +170,32 @@ try:
         st.rerun()
     st.sidebar.success("✅ 구글 실시간 데이터 파이프라인 가동 중")
 
+    # STREAMING_CHUNK: Defining metrics calculation and filtering active months...
     def calculate_metrics(df, target_year, month_filter=None):
         df_year = df[df['연도'] == str(target_year)]
         if df_year.empty:
             return None
         
-        # [핵심] 전년 동기 대비 시, 2026년에 존재하는 월만 2025년에서 필터링하여 매칭 비교
+        # [지능형 활성 월 자동 필터링 파이프라인]
+        # 1. 명시적인 month_filter가 주어지면(YoY 비교 모드) 해당 필터를 사용하여 개별 월을 필터링합니다.
+        # 2. 단해년도 성과 보기의 경우, 미래의 '빈 행(0원)' 데이터가 평균 계산 및 최종 누적액 계산을 훼손하지 않도록
+        #    광고비, 매출, 가입자 중 실적이 실제로 기록된 활성 월(Active Months)만 자동 필터링합니다.
         if month_filter is not None and len(month_filter) > 0:
             df_year = df_year[df_year['월'].isin(month_filter)]
-            if df_year.empty:
-                return None
+        else:
+            # 실적이 존재하는 활성 행 추적
+            active_rows = df_year[
+                (df_year['전체광고비'] > 0) | 
+                (df_year['신규누적매출'] > 0) | 
+                (df_year['신규당월매출'] > 0) |
+                (df_year['광고가입자'] > 0)
+            ]
+            if not active_rows.empty:
+                active_months = active_rows['월'].unique()
+                df_year = df_year[df_year['월'].isin(active_months)]
+                
+        if df_year.empty:
+            return None
             
         spend = df_year['전체광고비'].sum()
         signups = df_year['광고가입자'].sum()
@@ -185,12 +204,11 @@ try:
         cpa_ad = (spend / signups) if signups > 0 else 0
         cpa_paid = (spend / paid_cust) if paid_cust > 0 else 0
         
-        # 구글 시트에 수동 입력된 가중 평균 ROAS 적용
+        # 실제 데이터가 존재하는 활성 월들에 대해서만 정확한 평균 ROAS 집계
         roas = df_year['광고비ROAS'].mean() if not df_year.empty else 0.0
         
         # [★지능형 누적 매출 정합성 계산 엔진★]
-        # 누적 매출은 전체 기간 합산(.sum())을 하면 중복 계산 오류가 납니다.
-        # 분석 대상 기간 중 가장 마지막 월(최신 월)의 행 데이터를 추적하여 최종 누적 값 하나만 가져옵니다.
+        # 활성 월 중 가장 마지막 월(최신 월)의 행 데이터를 추적하여 최종 누적 값 하나만 가져옵니다.
         df_year_calc = df_year.copy()
         df_year_calc['월_num_temp'] = df_year_calc['월'].str.extract(r'(\d+)').astype(float).fillna(0)
         df_year_sorted = df_year_calc.sort_values(by='월_num_temp')
@@ -207,6 +225,7 @@ try:
             'roas': roas
         }
 
+    # STREAMING_CHUNK: Setting up YoY HTML templates with strict sign color rules...
     def get_delta_html(current_val, prev_val, is_lower_better=False, is_pct_p=False):
         if prev_val is None or prev_val == 0:
             return '<div class="kpi-delta-white">YoY: -</div>'
@@ -219,10 +238,10 @@ try:
         
         if diff == 0:
             cls = 'kpi-delta-white'
-        elif is_lower_better:
-            cls = 'good' if diff < 0 else 'bad'
+        elif diff > 0:
+            cls = 'plus'   # 무조건 수학적 증가(+)는 빨간색
         else:
-            cls = 'good' if diff > 0 else 'bad'
+            cls = 'minus'  # 무조건 수학적 감소(-)는 파란색
             
         return f'<div class="kpi-delta {cls}">YoY: {arrow} {sign}{pct:.1f}{unit}</div>'
 
@@ -233,8 +252,10 @@ try:
         pct = (diff / prev_val) * 100
         sign = '+' if diff >= 0 else ''
         arrow = '↑' if diff >= 0 else '↓'
+        # 그라데이션 카드용(화이트 초고대비 텍스트 유지)
         return f'<div class="kpi-delta-white">YoY: {arrow} {sign}{pct:.1f}%</div>'
 
+    # STREAMING_CHUNK: Generating grid board and responsive plots...
     def generate_bi_charts(data_subset, label_title, show_yoy=False):
         st.markdown(f"### 🗓️ {label_title}")
         
@@ -546,6 +567,7 @@ try:
         else:
             generate_bi_charts(df_all_merged, f"전체 서비스 통합 보고 [{year_mode}]", show_yoy=False)
 
+    # STREAMING_CHUNK: Setting up service-specific loops and views...
     def render_service_view(tab_obj, s_name):
         with tab_obj:
             df_s_2025 = raw_data[(raw_data['서비스명'] == s_name) & (raw_data['연도'] == '2025')].copy()
