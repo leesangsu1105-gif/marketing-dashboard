@@ -179,7 +179,6 @@ try:
                 return None
             
         spend = df_year['전체광고비'].sum()
-        revenue = df_year['신규누적매출'].sum()
         signups = df_year['광고가입자'].sum()
         paid_cust = df_year['신규유료고객수'].sum()
         
@@ -188,6 +187,15 @@ try:
         
         # 구글 시트에 수동 입력된 가중 평균 ROAS 적용
         roas = df_year['광고비ROAS'].mean() if not df_year.empty else 0.0
+        
+        # [★지능형 누적 매출 정합성 계산 엔진★]
+        # 누적 매출은 전체 기간 합산(.sum())을 하면 중복 계산 오류가 납니다.
+        # 분석 대상 기간 중 가장 마지막 월(최신 월)의 행 데이터를 추적하여 최종 누적 값 하나만 가져옵니다.
+        df_year_calc = df_year.copy()
+        df_year_calc['월_num_temp'] = df_year_calc['월'].str.extract(r'(\d+)').astype(float).fillna(0)
+        df_year_sorted = df_year_calc.sort_values(by='월_num_temp')
+        
+        revenue = df_year_sorted.iloc[-1]['신규누적매출'] if not df_year_sorted.empty else 0.0
         
         return {
             'spend': spend,
